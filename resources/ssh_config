@@ -1,0 +1,9 @@
+Host *
+    AddKeysToAgent yes
+    IdentitiesOnly yes
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    HostKeyAlgorithms +ssh-rsa
+    KexAlgorithms +diffie-hellman-group1-sha1
+    Ciphers +aes128-cbc,aes256-cbc
+    LogLevel ERROR

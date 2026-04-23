@@ -857,7 +857,6 @@ version_check() {
 }
 
 
-
 device_entry() {
     # enable manual entry
     log "Manual device/ECID entry is enabled."
@@ -8373,6 +8372,9 @@ menu_print_info() {
     if [[ $EUID == 0 && $run_as_root == 1 ]]; then
         warn "Script is running as root. This is not supported, proceed with caution."
     fi
+    if [[ $git_hash_latest != "$git_hash" ]]; then
+        warn "Current version is newer/different than remote: $version_latest ($git_hash_latest)"
+    fi
     print "* Platform: $platform ($platform_ver - $platform_arch) $live_session_str"
     if [[ $platform == "macos" && $platform_arch == "arm64" ]]; then
         if (( mac_majver == 12 && mac_minver < 6 )) || (( mac_majver < 12 )); then
@@ -10529,7 +10531,7 @@ menu_restore() {
         case $device_type in
             iPod4,1 ) menu_items+=("7.1.2");;
             iPod3,1 ) menu_items+=("6.0" "6.1.3" "6.1.6");;
-            iPad1,1 ) menu_items+=("6.1.3" "7.1.2");;
+            iPad1,1 ) menu_items+=("6.1.3");;
         esac
         if [[ $device_canpowder == 1 && $device_proc != 4 ]]; then
             local text2="7.1.x"
@@ -10592,7 +10594,7 @@ menu_restore() {
             "IPSW Downloader" ) menu_ipsw_downloader "$1";;
             7.* )
                 case $device_type in
-                    iPod4,1 | iPad1,1 ) menu_ipsw_special "$selected" "$1";;
+                    iPod4,1 ) menu_ipsw_special "$selected" "$1";;
                     * ) menu_ipsw "$selected" "$1";;
                 esac
             ;;
@@ -11777,7 +11779,9 @@ menu_ipsw() {
         fi
         
         # AppleInternal Menu Option
-        menu_items+=("AppleInternal")
+        if [[ $1 == *"powdersn0w"* || $1 == *"Tethered"* ]]; then
+            menu_items+=("AppleInternal")
+        fi
         
         # Advanced Options Menu (powdersn0w creation, or ANY powdersn0w/tethered restore)
         if [[ $1 == *"powdersn0w"* ]] || [[ $1 == *"Tethered"* && $2 != "ipsw" ]]; then
@@ -11962,7 +11966,7 @@ menu_ipsw_special() {
         if [[ -n $ipsw_path && -n $ipsw_base_path ]]; then
             menu_items+=("$start")
         fi
-        menu_items+=("AppleInternal" "Go Back")
+        menu_items+=("Go Back")
 
         print "$nav"
         input "Select an option:"
@@ -11975,20 +11979,6 @@ menu_ipsw_special() {
             "Select Base IPSW (Stock)" ) menu_ipsw_browse "base";;
             "Download Target IPSW" ) ipsw_download "../${device_type_special}_${device_target_vers}_${device_target_build}_Restore" special;;
             "Download Base IPSW" ) ipsw_download "../$ipsw_latest_path" latest;;
-            "AppleInternal" )
-                ipsw_appleinternal=1
-
-                local ai_context="restore"
-                if [[ $2 == "ipsw" ]]; then
-                    ai_context=""
-                fi
-
-                menu_ipsw_appleinternal "$1" "$ai_context"
-
-                if [[ -z $mode ]]; then
-                    ipsw_appleinternal=
-                fi
-            ;;
             "Go Back" )
                 back=1
 

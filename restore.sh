@@ -14423,20 +14423,27 @@ main() {
     set_tool_paths
 
     if [[ $no_internet_check != 1 ]]; then
-        log "Checking Internet connection..."
-        local try=("google.com" "www.apple.com" "208.67.222.222")
-        local check
-        for i in "${try[@]}"; do
-            ping -c1 $i | sed -n '1,2p'
-            check=${PIPESTATUS[0]}
-            if [[ $check == 0 ]]; then
-                break
-            fi
-        done
-        if [[ $check != 0 ]]; then
-            error "Please check your Internet connection before proceeding."
+    log "Checking Internet connection..."
+    local check=1
+    local try_urls=(
+        "https://www.google.com"
+        "https://www.apple.com"
+        "https://1.1.1.1"
+    )
+
+    for i in "${try_urls[@]}"; do
+        echo "* Trying: $i"
+        curl -L --silent --head --max-time 5 "$i" >/dev/null 2>&1
+        check=$?
+        if [[ $check == 0 ]]; then
+            break
         fi
+    done
+
+    if [[ $check != 0 ]]; then
+        error "Please check your Internet connection before proceeding."
     fi
+fi
 
     local checks=(curl git patch xxd)
     local check_fail

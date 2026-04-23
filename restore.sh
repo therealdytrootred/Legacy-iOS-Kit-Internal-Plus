@@ -5,6 +5,7 @@ device_rd_build="" # You can change the version of SSH Ramdisk and Pwned iBSS/iB
 device_bootargs_default="pio-error=0 debug=0x2014e serial=3 amfi=0xff cs_enforcement_disable=1"
 device_disable_sudoloop=1
 jelbrek="../resources/jailbreak"
+sundance="../saved/SundanceInH2A"
 ssh_port=6414
 use_premade_custom=0
 
@@ -400,7 +401,9 @@ set_tool_paths() {
         fi
 
         # distro check
-        if [[ $ID == "arch" || $ID_LIKE == "arch" || $ID == "artix" || $ID == "cachyos" ]]; then
+        if [[ $ID == "steamos" ]]; then
+            distro="steamos"
+        elif [[ $ID == "arch" || $ID_LIKE == "arch" || $ID == "artix" || $ID == "cachyos" ]]; then
             distro="arch"
         elif (( ubuntu_ver >= 22 )) || (( debian_ver >= 12 )) || [[ $debian_ver == "sid" ]]; then
             distro="debian"
@@ -14627,6 +14630,524 @@ fi
 clean_ran=
 clean_usbmuxd_ran=
 othertmp=$(ls "$(dirname "$0")" | grep -c tmp)
+
+
+install_udev_rules() {
+    local rule="/etc/udev/rules.d/99-libirecovery.rules"
+    [[ -s $rule ]] && return
+    log "Setting up udev rules..."
+    if [[ $live_session != 1 && $device_disable_usbmuxd == 1 ]]; then
+        print "* Enter your user password when prompted"
+        print "* Your password input may not be visible, but it is still being entered."
+    fi
+    $sudo mkdir -p $(dirname $rule)
+    echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", MODE:="0666", TAG+="uaccess"' | $sudo tee $rule
+    $sudo udevadm control --reload-rules
+    $sudo udevadm trigger -s usb
+}
+
+
+device_get_paired_info() {
+    device_serial="$($ideviceinfo -k SerialNumber | cut -c 3- | cut -c -3)"
+    device_unactivated=$($ideviceactivation state | grep -c "Unactivated")
+    device_imei=$($ideviceinfo -k InternationalMobileEquipmentIdentity)
+}
+
+
+download_with_pzb() {
+    local url="$1"
+    local file="$2"
+    local file_out="$3"
+    local sha="$4"
+    log "Downloading $file from: $url"
+    "$dir/pzb" -g "$file" -o "$file_out" "$url"
+    if [[ -n $sha ]]; then
+        local sha_local="$($sha1sum "$file_out" | awk '{print $1}')"
+        if [[ $sha_local != "$sha" ]]; then
+            error "SHA1sum mismatch. Expected $sha, got $sha_local. Please run the script again"
+        fi
+    fi
+}
+
+
+ipsw_prepare_specialios7() {
+    local all_flash2="$ipsw_custom/$all_flash"
+    local patches="../resources/patch/touch4-ios7"
+    local saves="../saved/touch4-ios7"
+    local ipad1ios7="../saved/ipad1-ios7/repo"
+    local kc="../saved/ipad1-ios7/kernelcache.release.n90" # iPhone3,1 7.1.2
+    local ramdisk6="../saved/ipad1-ios7/048-2516-005.dmg" # iPad2,1 6.1.3
+
+    if [[ -e "$ipsw_custom.ipsw" ]]; then
+        log "Found existing Custom IPSW. Skipping IPSW creation."
+        return
+    fi
+
+    if [[ $device_type == "iPad1,1" ]]; then
+        log "Preparing files"
+        mkdir -p $ipad1ios7
+        if [[ ! -s $kc ]]; then
+            local sha="b7b8771c6b54f472b1342f5cb92e3cf730ac9ef7"
+            log "Downloading iPhone3,1 7.1.2 kernelcache"
+            download_with_pzb "https://secure-appldnld.apple.com/iOS7.1/031-4812.20140627.cq6y8/iPhone3,1_7.1.2_11D257_Restore.ipsw" $(basename $kc) kc $sha
+            mv kc $kc
+        fi
+        if [[ ! -s $ramdisk6 ]]; then
+            local sha="dcb5760e02a2abc4cfec610cca8c359179c3eebc"
+            log "Downloading iPad2,1 6.1.3 ramdisk"
+            download_with_pzb "https://secure-appldnld.apple.com/iOS6.1/091-2397.20130319.EEae9/iPad2,1_6.1.3_10B329_Restore.ipsw" $(basename $ramdisk6) ramdisk6 $sha
+            mv ramdisk6 $ramdisk6
+        fi
+
+        log "Preparing ipad-1-ios-7"
+        if [[ ! -s $ipad1ios7/run.tool ]]; then
+            local repo="https://github.com/amy-and-nicole/ipad-1-ios-7"
+            rm -rf $ipad1ios7
+            log "git clone: $repo"
+            git clone $repo $ipad1ios7
+        fi
+        download_sundancerepo
+
+    else # iPod4,1
+        mkdir -p $saves/$device_target_build
+    fi
+
+    log "Preparing custom IPSW..."
+    mkdir -p $ipsw_custom/Firmware/dfu $ipsw_custom/Downgrade $all_flash2
+
+    local comps=("iBSS" "iBEC" "DeviceTree" "Kernelcache" "RestoreRamdisk"
+        "AppleLogo" "BatteryCharging0" "BatteryCharging1" "BatteryFull" "BatteryLow0" "BatteryLow1"
+        "GlyphCharging" "GlyphPlugin" "iBoot" "LLB" "RecoveryMode")
+    local name
+    local iv
+    local key
+    local path
+    device_fw_key_check base
+
+    log "Getting base ($device_base_vers) restore components"
+    for getcomp in "${comps[@]}"; do
+        name=$(echo $device_fw_key_base | $jq -j '.keys[] | select(.image == "'$getcomp'") | .filename')
+        iv=$(echo $device_fw_key_base | $jq -j '.keys[] | select(.image == "'$getcomp'") | .iv')
+        key=$(echo $device_fw_key_base | $jq -j '.keys[] | select(.image == "'$getcomp'") | .key')
+        case $getcomp in
+            "iBSS" | "iBEC" ) path="Firmware/dfu/";;
+            "Kernelcache" | "RestoreRamdisk" ) path="";;
+            * ) path="$all_flash/";;
+        esac
+        log "$getcomp"
+        file_extract_from_archive "$ipsw_base_path.ipsw" ${path}$name
+        case $getcomp in
+            "DeviceTree" )
+                cp $name $all_flash2/
+                "$dir/xpwntool" $name $ipsw_custom/Downgrade/RestoreDeviceTree -iv $iv -k $key -decrypt
+            ;;
+            "Kernelcache" )
+                "$dir/xpwntool" $name $ipsw_custom/Downgrade/RestoreKernelCache -iv $iv -k $key -decrypt
+            ;;
+            "AppleLogo" )
+                cp $name $all_flash2/
+                "$dir/xpwntool" $name $ipsw_custom/Downgrade/RestoreLogo -iv $iv -k $key -decrypt
+            ;;
+            "iBSS" | "iBEC" | "RestoreRamdisk" )
+                mv $name $getcomp.orig
+                "$dir/xpwntool" $getcomp.orig $getcomp.dec -iv $iv -k $key
+            ;;
+            * ) mv $name $all_flash2/;;
+        esac
+    done
+
+    log "Patch iBSS"
+    "$dir/iBoot32Patcher" iBSS.dec iBSS.patched --rsa
+    "$dir/xpwntool" iBSS.patched $ipsw_custom/Firmware/dfu/iBSS.${device_model}ap.RELEASE.dfu -t iBSS.orig
+
+    log "Patch iBEC"
+    if [[ $device_type == "iPad1,1" ]]; then
+        $bspatch iBEC.dec iBEC.patched $patches/iBEC.k48ap.RELEASE.patch
+        "$dir/xpwntool" iBEC.patched $ipsw_custom/Firmware/dfu/iBEC.${device_model}ap.RELEASE.dfu -t iBEC.orig
+    else # iPod4,1
+        "$dir/iBoot32Patcher" iBEC.dec iBEC.patched --rsa --debug --ticket -b "rd=md0 -v amfi=0xff cs_enforcement_disable=1"
+        "$dir/xpwntool" iBEC.patched $ipsw_custom/Firmware/dfu/iBEC.${device_model}ap.RELEASE.dfu -t iBEC.orig # restore ibec
+        "$dir/iBoot32Patcher" iBEC.dec iBEC.patched --rsa --debug --ticket -b "-v amfi=0xff cs_enforcement_disable=1"
+        "$dir/xpwntool" iBEC.patched $saves/pwnediBEC.dfu -t iBEC.orig # boot ibec
+    fi
+
+    log "Base manifest plist"
+    file_extract_from_archive "$ipsw_base_path.ipsw" BuildManifest.plist
+    $PlistBuddy -c "Set BuildIdentities:0:Manifest:RestoreDeviceTree:Info:Path Downgrade/RestoreDeviceTree" BuildManifest.plist
+    $PlistBuddy -c "Set BuildIdentities:0:Manifest:RestoreKernelCache:Info:Path Downgrade/RestoreKernelCache" BuildManifest.plist
+    $PlistBuddy -c "Set BuildIdentities:0:Manifest:RestoreLogo:Info:Path Downgrade/RestoreLogo" BuildManifest.plist
+    $PlistBuddy -c "Set ProductBuildVersion $device_target_build" BuildManifest.plist
+    $PlistBuddy -c "Set ProductVersion $device_target_vers" BuildManifest.plist
+    cp BuildManifest.plist $ipsw_custom/
+
+    local ramdisk_name=$(echo $device_fw_key_base | $jq -j '.keys[] | select(.image == "RestoreRamdisk") | .filename')
+    log "Restore Ramdisk: $ramdisk_name"
+    if [[ $device_type == "iPad1,1" ]]; then
+        # iPad2,1 6.1.3
+        "$dir/xpwntool" $ramdisk6 ramdisk.dec -iv 8775b711d2e09e332f8ebfbebe63cce7 -k d406dc4343eedf9d6567e8303ba39a21f81f99bf701840c888963af58a84fb8f
+    else # iPod4,1
+        mv RestoreRamdisk.dec ramdisk.dec
+    fi
+    "$dir/hfsplus" ramdisk.dec grow 13000000
+
+    log "Patch ASR"
+    ipsw_patch_file ramdisk.dec usr/sbin asr $patches/asr.${device_model}.patch
+
+    log "Modify options.plist"
+    [[ $device_type == "iPod4,1" ]] && "$dir/hfsplus" ramdisk.dec rm usr/local/share/restore/options.${device_model}.plist
+    "$dir/hfsplus" ramdisk.dec add $patches/options.plist usr/local/share/restore/options.${device_model}.plist
+
+    if [[ $device_type == "iPad1,1" ]]; then # NyanSatan rc.boot and exploit
+        log "Add exploit stuff from SundanceInH2A"
+        "$dir/hfsplus" ramdisk.dec rm private/etc/rc.boot
+        "$dir/hfsplus" ramdisk.dec add $sundance/rc_boot/rc.boot private/etc/rc.boot
+        "$dir/hfsplus" ramdisk.dec chmod 755 private/etc/rc.boot
+        "$dir/hfsplus" ramdisk.dec chown 0:0 private/etc/rc.boot
+        "$dir/hfsplus" ramdisk.dec add $sundance/exploit/exploit-k48.dmg exploit.dmg
+    elif [[ $ipsw_jailbreak == 1 ]]; then # touch 4 only
+        ipsw_prepare_rebootsh aquila2
+        log "Jailbreak stuff in ramdisk"
+        "$dir/hfsplus" ramdisk.dec untar $jelbrek/daibutsu/bin.tar
+        "$dir/hfsplus" ramdisk.dec mv sbin/reboot sbin/reboot_
+        "$dir/hfsplus" ramdisk.dec add reboot.sh sbin/reboot
+        "$dir/hfsplus" ramdisk.dec chmod 755 sbin/reboot
+        "$dir/hfsplus" ramdisk.dec chown 0:0 sbin/reboot
+    fi
+
+    log "Repack Restore Ramdisk"
+    "$dir/xpwntool" ramdisk.dec $ipsw_custom/$ramdisk_name -t RestoreRamdisk.orig
+
+    local rootfs_name=$(echo $device_fw_key_base | $jq -j '.keys[] | select(.image == "RootFS") | .filename')
+    log "Base RootFS: $rootfs_name"
+
+    log "Target manifest plist"
+    rm BuildManifest.plist
+    file_extract_from_archive "$ipsw_path.ipsw" BuildManifest.plist
+    local rootfs_target_name=$($PlistBuddy -c "Print BuildIdentities:0:Manifest:OS:Info:Path" BuildManifest.plist | tr -d '"')
+    local rootfs_target_key
+    local kc_iv
+    local kc_key
+    case $device_type_special in
+        iPad2,1 )
+            # iPad2,1 7.1.2
+            rootfs_target_key="2ce48d3e6cbd6fd68c775f2f0261e205f27c78280035bb6bffadccfbec44f4d890bd34b9"
+            # iPad1,1 5.1.1
+            kc_iv="140984858e5c7fe245a43596f5370a0e"
+            kc_key="fc6733108c9bd4b2179257102f81998089437c2c58cbdb8752fd40a442bd9434"
+        ;;
+        iPhone3,3 )
+            # iPhone3,3 7.1.2
+            rootfs_target_key="423b3503689b7058d1398d1b5d56a7b1ccf4d79e1c3e6ba853122b4f86820a9e3bc911f6"
+            kc_iv="b84212f017d5ffd962db0bbe050581dc"
+            kc_key="92e5720cadf724cdf428d44119b634ab3346aef1ab4e3e20abc8ecb73f7f8642"
+        ;;
+    esac
+    local rootfs_target_size=1589
+    rootfs_target_size=$((rootfs_target_size*1024*1024))
+
+    if [[ $device_type == "iPad1,1" ]]; then
+        log "Target kernelcache"
+        cp $kc $ipsw_custom/kernelcache.release.k48
+        log "Restore kernelcache"
+        file_extract_from_archive "$ipsw_base_path.ipsw" kernelcache.release.k48
+        "$dir/xpwntool" $sundance/artifacts/kernelcache.k48ap.bin $ipsw_custom/Downgrade/RestoreKernelCache -t kernelcache.release.k48 -iv $kc_iv -k $kc_key
+        log "Target devicetree"
+        cp $ipad1ios7/artifacts/DeviceTree.k48ap.img3 $all_flash2/
+        log "Restore devicetree"
+        "$dir/img3maker" -f $sundance/artifacts/DeviceTree.k48ap.bin -o $ipsw_custom/Downgrade/RestoreDeviceTree -t dtre
+
+    else # iPod4,1
+        log "Target kernelcache"
+        file_extract_from_archive "$ipsw_path.ipsw" kernelcache.release.$device_model_special
+        mv kernelcache.release.$device_model_special kc
+        "$dir/xpwntool" kc kc.new -iv $kc_iv -k $kc_key -decrypt
+        cp kc.new $saves/$device_target_build/kernelcache
+        cp kc.new $ipsw_custom/kernelcache.release.$device_model # wont be used, but needed for restore
+    fi
+
+    log "Target RootFS: extracting dmg from ipsw"
+    file_extract_from_archive "$ipsw_path.ipsw" $rootfs_target_name
+    log "Target RootFS: extracting dmg with key $rootfs_target_key"
+    "$dir/dmg" extract $rootfs_target_name rootfs.dec -k $rootfs_target_key
+    if [[ $? != 0 || ! -s rootfs.dec ]]; then
+        error "Failed to extract dmg. Please run the script again"
+    fi
+    rm $rootfs_target_name
+    log "Target RootFS: growing $rootfs_target_size"
+    "$dir/hfsplus" rootfs.dec grow $rootfs_target_size
+
+    log "Target RootFS: untar firmwares"
+    "$dir/hfsplus" rootfs.dec untar $patches/wifi.$device_model.tar
+
+    local gestalt="private/var/mobile/Library/Caches/com.apple.MobileGestalt.plist"
+    log "Target RootFS: adding gestalt"
+    "$dir/hfsplus" rootfs.dec add $patches/gestalt.$device_model.plist $gestalt
+
+    if [[ $device_type == "iPad1,1" ]]; then
+        local compass="System/Library/HIDPlugins/CompassPlugIn.plugin"
+        log "Target RootFS: remove CompassPlugIn"
+        "$dir/hfsplus" rootfs.dec rm $compass/CompassPlugIn
+
+        local dsc="System/Library/Caches/com.apple.dyld/dyld_shared_cache_armv7"
+        log "Target RootFS: extracting dsc, this will take a while"
+        "$dir/hfsplus" rootfs.dec extract $dsc
+        log "Patching dsc, this will take a while"
+        xxd dyld_shared_cache_armv7 > dyld_shared_cache_armv7.hex
+        git apply $patches/dyld_shared_cache_armv7.patch
+        xxd -r dyld_shared_cache_armv7.hex > dyld_shared_cache_armv7.patched
+        log "Target RootFS: replacing dsc, this will take a while"
+        "$dir/hfsplus" rootfs.dec rm $dsc
+        "$dir/hfsplus" rootfs.dec add dyld_shared_cache_armv7.patched $dsc
+        "$dir/hfsplus" rootfs.dec chmod 755 $dsc
+        "$dir/hfsplus" rootfs.dec chown 0:0 $dsc
+        rm dyld_shared_cache_armv7*
+
+        local db="System/Library/Extensions/IMGSGX535GLDriver.bundle"
+        log "Target RootFS: adding iphone graphics drivers"
+        "$dir/hfsplus" rootfs.dec mkdir $db
+        "$dir/hfsplus" rootfs.dec add $ipad1ios7/artifacts/IMGSGX535GLDriver $db/IMGSGX535GLDriver
+        "$dir/hfsplus" rootfs.dec add $ipad1ios7/artifacts/H264H2.videodecoder System/Library/VideoDecoders/H264H2.videodecoder
+        "$dir/hfsplus" rootfs.dec add $ipad1ios7/artifacts/MP4VH2.videodecoder System/Library/VideoDecoders/MP4VH2.videodecoder
+    fi
+
+    if [[ $ipsw_jailbreak == 1 ]]; then
+        log "Target RootFS: untar jailbreak bootstrap"
+        cp $jelbrek/freeze.tar.gz .
+        gzip -d freeze.tar.gz
+        "$dir/hfsplus" rootfs.dec untar freeze.tar
+        "$dir/hfsplus" rootfs.dec untar $jelbrek/LukeZGD.tar
+        touch .cydia_no_stash
+        "$dir/hfsplus" rootfs.dec add .cydia_no_stash .cydia_no_stash
+
+        log "Target RootFS: untar jailbreak untether"
+        "$dir/hfsplus" rootfs.dec untar $jelbrek/aquila_7.tar
+        if [[ $device_type == "iPad1,1" ]]; then
+            "$dir/hfsplus" rootfs.dec rm usr/lib/libmis.dylib
+            "$dir/hfsplus" rootfs.dec mv aquila usr/libexec/dirhelper
+        fi
+
+        if [[ $ipsw_openssh == 1 ]]; then
+            log "Target RootFS: untar jailbreak openssh"
+            cp $jelbrek/openssh.tar.gz $jelbrek/openssl.tar.gz .
+            gzip -d openssh.tar.gz
+            gzip -d openssl.tar.gz
+            "$dir/hfsplus" rootfs.dec untar $jelbrek/sshdeb.tar
+            "$dir/hfsplus" rootfs.dec untar openssh.tar
+            "$dir/hfsplus" rootfs.dec untar openssl.tar
+        fi
+    fi
+
+    log "Target RootFS: building dmg as $rootfs_name"
+    "$dir/dmg" build rootfs.dec $ipsw_custom/$rootfs_name
+    if [[ $? != 0 || ! -s $ipsw_custom/$rootfs_name ]]; then
+        error "Failed to build dmg. Please run the script again"
+    fi
+
+    log "Creating $ipsw_custom.ipsw..."
+    pushd $ipsw_custom >/dev/null
+    zip -r0 $ipsw_custom.ipsw *
+    popd >/dev/null
+
+    if [[ $device_type == "iPod4,1" ]]; then
+        echo "device_target_build=$device_target_build" > $saves/$device_ecid
+    fi
+}
+
+
+download_sundancerepo() {
+    local sr="../saved/SundanceResources.b64"
+    local sr_sha1="ebf508aff198fa80204bf3d6df0114e9b645f1c0"
+    local sr_url="https://gist.githubusercontent.com/NyanSatan/1cf6921821484a2f8f788e567b654999/raw/54c6ad7554710af454c87ec2d99f869e6e669c99/SundanceResources.b64"
+
+    log "Preparing SundanceInH2A"
+
+    # take care of older sundance folders/repos
+    [[ -d ${sundance}_macos ]] && mv ${sundance}_macos/ ${sundance}/
+    [[ -d ${sundance}_linux ]] && rm -rf ${sundance}_linux/
+
+    if [[ -s $sundance/Sundancer ]]; then
+        pushd $sundance >/dev/null
+        git reset --hard
+        git checkout reliability-and-debug # change to main later
+        git pull
+        popd >/dev/null
+    else
+        local repo="https://github.com/NyanSatan/SundanceInH2A"
+        rm -rf $sundance
+        log "git clone: $repo"
+        git clone $repo $sundance
+        pushd $sundance >/dev/null
+        git checkout reliability-and-debug
+        git pull
+        popd >/dev/null
+    fi
+
+    if [[ -s $sr ]]; then
+        if [[ $($sha1sum $sr 2>/dev/null | awk '{print $1}') != "$sr_sha1" ]]; then
+            rm $sr
+        fi
+    fi
+
+    if [[ ! -s $sr ]]; then
+        log "Downloading resources: $(basename $sr)"
+        download_from_url "$sr_url" "$sr"
+    fi
+
+    if [[ $($sha1sum $sr 2>/dev/null | awk '{print $1}') != "$sr_sha1" ]]; then
+        rm $sr
+        error "Downloading/verifying resources failed. Please run the script again"
+    fi
+
+    log "Preparing resources"
+    if [[ $platform == "macos" ]]; then
+        cat $sr | base64 --decode | tar -xvf -
+    else
+        base64 --decode $sr | xz -d | tar -xvf -
+    fi
+    mv artifacts/* $sundance/artifacts/
+    mv resources/* $sundance/resources/
+}
+
+
+ipsw_prepare_sundanceinh2a() {
+    local ipsw_path2="${device_type_special}_${device_target_vers}_${device_target_build}_Restore"
+    local ipsw_base_path2="${device_type}_${device_base_vers}_${device_base_build}_Restore"
+    local ipsw_custom2="${device_type}_${device_target_vers}_${device_target_build}_Custom"
+    local jb
+    [[ $ipsw_jailbreak == 1 ]] && jb="-j"
+
+    if [[ -e "$ipsw_custom.ipsw" ]]; then
+        log "Found existing Custom IPSW. Skipping IPSW creation."
+        return
+    fi
+
+    download_sundancerepo
+
+    log "Copying freeze.tar to Cydia.tar"
+    cp $jelbrek/freeze.tar.gz .
+    gzip -d freeze.tar.gz
+    mv freeze.tar $sundance/resources/Cydia.tar
+
+    log "Copying IPSWs..."
+    cp "$ipsw_path.ipsw" "$sundance/$ipsw_path2.ipsw"
+    cp "$ipsw_base_path.ipsw" "$sundance/$ipsw_base_path2.ipsw"
+    log "Preparing custom IPSW..."
+    pushd $sundance >/dev/null
+    rm -rf "$ipsw_custom2"
+    ./Sundancer $jb "$ipsw_base_path2.ipsw" "$ipsw_path2.ipsw" "$ipsw_custom2"
+    rm "$ipsw_path2.ipsw" "$ipsw_base_path2.ipsw"
+    if [[ ! -d "$ipsw_custom2" ]]; then
+        error "Custom IPSW creation seems to have failed. Please run the script again" \
+              "* If you do not have Python 3 installed, install it since SundanceInH2A requires it."
+    fi
+    pushd "$ipsw_custom2" >/dev/null
+    zip -r0 ../../$ipsw_custom.ipsw *
+    popd >/dev/null
+    rm -rf "$ipsw_custom2"
+    popd >/dev/null
+
+    # ibec ticket patch
+    log "Starting iBEC ticket patch"
+    mv "$ipsw_custom.ipsw" temp.ipsw
+    device_fw_key_check temp $device_base_build
+    mkdir -p Firmware/dfu
+    local iv=$(echo $device_fw_key_temp | $jq -j '.keys[] | select(.image == "iBEC") | .iv')
+    local key=$(echo $device_fw_key_temp | $jq -j '.keys[] | select(.image == "iBEC") | .key')
+    local name="iBEC.${device_model}ap.RELEASE.dfu"
+    file_extract_from_archive temp.ipsw Firmware/dfu/$name
+    "$dir/xpwntool" $name ibec -iv $iv -k $key
+    "$dir/iBoot32Patcher" ibec ibec.patched --ticket
+    "$dir/img3maker" -f ibec.patched -o Firmware/dfu/$name -t ibec
+    log "Add all to custom IPSW"
+    zip -r0 temp.ipsw Firmware/dfu/*
+    mv temp.ipsw "$ipsw_custom.ipsw"
+}
+
+
+menu_backup_encryption() {
+    local menu_items
+    local selected
+    local back
+
+    while [[ -z "$mode" && -z "$back" ]]; do
+        menu_print_info
+        menu_items=("Encryption On" "Encryption Off" "Change Password" "Go Back")
+        echo
+        print " > Main Menu > Data Management > Encryption"
+        input "Select an option:"
+        select_option "${menu_items[@]}"
+        selected="${menu_items[$?]}"
+        case $selected in
+            "Encryption On"   ) "$dir/idevicebackup2" -i encryption on; pause;;
+            "Encryption Off"  ) "$dir/idevicebackup2" -i encryption off; pause;;
+            "Change Password" ) "$dir/idevicebackup2" -i changepw; pause;;
+            "Go Back" ) back=1;;
+        esac
+    done
+}
+
+
+device_justboot_touch4ios7() {
+    local patches="../resources/patch/touch4-ios7"
+    local saves="../saved/touch4-ios7"
+    if [[ -d "../saved/$device_type/touch4-ios7" ]]; then
+        mv "../saved/$device_type/touch4-ios7" $saves
+    fi
+    if [[ ! -s $saves/$device_ecid ]]; then
+        error "Cannot find device file for $device_ecid in saved. Need to restore to iOS 7.1.2 first."
+    fi
+
+    source $saves/$device_ecid
+    [[ -z $device_target_build ]] && device_target_build="11D257"
+    log "device_target_build=$device_target_build"
+
+    device_enter_mode pwnDFU
+    device_rd_build=
+    patch_ibss
+    log "Sending iBSS..."
+    $irecovery -f pwnediBSS.dfu
+    sleep 1
+    log "Sending iBEC..."
+    $irecovery -f $saves/pwnediBEC.dfu
+    device_find_mode Recovery
+    log "devicetree"
+    $irecovery -f $patches/DeviceTree.n81ap.img3
+    $irecovery -c devicetree
+    log "kernelcache"
+    $irecovery -f $saves/$device_target_build/kernelcache
+    $irecovery -c bootx
+    log "Device should now boot."
+}
+
+
+device_trollrestore() {
+    local trollrestore="../saved/TrollRestore"
+    local venv="${trollrestore}_venv"
+    device_pair
+    if [[ ! -d $trollrestore ]]; then
+        log "Downloading TrollRestore"
+        file_download https://github.com/JJTech0130/TrollRestore/releases/download/1.0/TrollRestore_Linux.zip TrollRestore_Linux.zip 0673de2ebb9d17351231d6d6a615bb0933e43b0a
+        mkdir -p $trollrestore
+        file_extract TrollRestore_Linux.zip $trollrestore
+    fi
+
+    if [[ ! -d $venv || ! -s $venv/bin/python3 ]]; then
+        log "Creating venv"
+        python3 -m venv $venv
+    fi
+    if [[ ! -d $venv || ! -s $venv/bin/python3 ]]; then
+        error "Creation of venv seems to have failed. Please run the script again" \
+              "* If you do not have Python 3 installed, install it since TrollRestore requires it."
+    fi
+
+    log "Installing dependencies using pip..."
+    sed -i.bak '1s/.*/pymobiledevice3<=6.2.0/' $trollrestore/requirements.txt
+    $venv/bin/pip install -r $trollrestore/requirements.txt
+
+    log "Running TrollRestore..."
+    print "* When it prompts to enter app name, type Tips and press Enter/Return"
+    "$(cd .. && pwd)/saved/TrollRestore_venv/bin/python3" $trollrestore/trollstore.py
+}
 
 mkdir "$(dirname "$0")/tmp$$"
 pushd "$(dirname "$0")/tmp$$" >/dev/null

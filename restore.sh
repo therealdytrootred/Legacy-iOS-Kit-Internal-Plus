@@ -116,8 +116,7 @@ clean_usbmuxd() {
 display_help() {
     echo ' *** Legacy iOS Kit ***
   - Script by LukeZGD -
-  - Old Fork by kaiden.cc -
-  - New Fork by DYTRootRed at LegacyCore -
+  - Fork by DYTRootRed at LegacyCore -
 
 Usage: ./restore.sh [Options]
 
@@ -8356,8 +8355,7 @@ menu_print_info() {
         clear
     fi
     print " *** Legacy iOS Kit ***"
-    print " - Script by LukeZGD -"
-    print " - Old Fork by kaiden.cc -"
+    print " - Script by LukeZGD and DYTRootRed-"
     print " - New Fork by DYTRootRed at LegacyCore -"
     echo
     if [[ -n $version_current ]]; then
@@ -8589,7 +8587,7 @@ menu_appleinternal_dumper() {
         menu_print_info
         print " > Main Menu > AppleInternal OS Dumper"
         print "* Original 32-bit Dumper by Abdur Rehman"
-        print "* 64-bit Dumper features by kaiden.cc"
+        print "* 64-bit Dumper features by DYTRootRed"
         print "* This tool is designed for dumping SwitchBoard and InternalUI builds"
         if (( device_proc >= 7 )); then
             if [[ $device_mode == "Normal" && -n $device_vers_maj && $device_vers_maj -lt 10 ]]; then
@@ -14362,8 +14360,7 @@ main() {
         clear
     fi
     print " *** Legacy iOS Kit ***"
-    print " - Script by LukeZGD -"
-    print " - Old Fork by kaiden.cc -"
+    print " - Script by LukeZGD and DYTRootRed-"
     print " - New Fork by DYTRootRed at LegacyCore -"
     echo
     version_get

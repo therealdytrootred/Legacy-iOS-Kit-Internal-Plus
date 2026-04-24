@@ -1,4 +1,4 @@
-# Legacy iOS Kit Internal Plus (Unofficial Fork of Legacy iOS Kit by LukeZGD and Kaidencc)
+# Legacy iOS Kit Internal Plus (Unofficial Fork of Legacy iOS Kit by LukeZGD)
 
 - formerly iOS-OTA-Downgrader  
 - all-in-one tool for restoring, downgrading, jailbreaking, SHSH blobs, and more  
@@ -7,11 +7,10 @@
 
 ## Disclaimer
 
-This is an **unofficial fork** of Legacy iOS Kit by LukeZGD and Kaidencc.
+This is an **unofficial fork** of Legacy iOS Kit by LukeZGD.
 
-It is **not affiliated with or endorsed by the original maintainer (LukeZGD and Kaidencc)**
+It is **not affiliated with or endorsed by the original maintainer (LukeZGD)**
 
-The original fork by Kaidencc has been taken down by Kaidencc.  
 This version is maintained independently by me (DYTRootRed) at LegacyCore.
 
 Use at your own risk. Restoring or flashing devices can cause data loss or device issues.
@@ -27,7 +26,6 @@ You must provide your own **legally obtained software** when using this tool.
 ## Credits
 
 - **Original Project:** LukeZGD  
-- **Referenced Fork** KaidenCC  
 - **Maintained by:** DYTRootRed at LegacyCore  
 
 

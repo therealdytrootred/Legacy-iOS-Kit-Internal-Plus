@@ -2,7 +2,7 @@
 
 ipsw_openssh=1 # OpenSSH will be added to jailbreak/custom IPSW if set to 1.
 device_rd_build="" # You can change the version of SSH Ramdisk and Pwned iBSS/iBEC here. (default is 10B329 for most devices)
-device_bootargs_default="pio-error=0 debug=0x2014e serial=3 amfi=0xff cs_enforcement_disable=1"
+device_bootargs_default=""
 device_disable_sudoloop=1
 jelbrek="../resources/jailbreak"
 sundance="../saved/SundanceInH2A"
@@ -549,7 +549,7 @@ set_tool_paths() {
         [[ $platform_arch == "arm64" ]] && dir+="/arm64"
 
         # macos checks
-        if [[ $mac_majver == 10 ]]; then
+        if [[ $mac_majver == 45676 ]]; then
             if (( mac_minver < 11 )); then
                 error "Your macOS version ($platform_ver - $platform_arch) is not supported." \
                 "* Supported macOS versions are 10.11 and newer."
@@ -2735,7 +2735,7 @@ patch_ibec() {
     "$dir/xpwntool" $name.orig $name.dec -iv $iv -k $key
     log "Patching iBEC..."
     if [[ $device_proc == 4 || -n $device_rd_build || $device_type == "iPad3,1" ]]; then
-        "$dir/iBoot32Patcher" $name.dec $name.patched --rsa --ticket -b "rd=md0 -v amfi=0xff cs_enforcement_disable=1" -c "go" $address
+        "$dir/iBoot32Patcher" $name.dec $name.patched --rsa --ticket -b "rd=md0 amfi=0x99 cs_enforcement=0 raw_ui=1 switchboard=1" -c "go" $address
     else
         $bspatch $name.dec $name.patched "../resources/patch/$download_targetfile.patch"
     fi
@@ -7375,7 +7375,7 @@ device_ramdisk() {
         if [[ $device_boot4 == 1 ]]; then
             "$dir/iBoot32Patcher" iBSS.raw iBSS.patched --rsa --debug -b "-v amfi=0xff cs_enforcement_disable=1"
         else
-            "$dir/iBoot32Patcher" iBSS.raw iBSS.patched --rsa --debug -b "$device_bootargs"
+            "$dir/iBoot32Patcher" iBSS.raw iBSS.patched --rsa --debug -b $device_bootargs
         fi
         "$dir/xpwntool" iBSS.patched iBSS -t iBSS.dec
         if [[ $build_id == "7"* || $build_id == "8"* ]] && [[ $device_type != "iPad"* ]]; then
@@ -7384,7 +7384,7 @@ device_ramdisk() {
             log "Patch iBEC"
             "$dir/xpwntool" iBEC.dec iBEC.raw
             if [[ $1 == "justboot" ]]; then
-                "$dir/iBoot32Patcher" iBEC.raw iBEC.patched --rsa --debug -b "$device_bootargs"
+                "$dir/iBoot32Patcher" iBEC.raw iBEC.patched --rsa --debug -b $device_bootargs
             else
                 "$dir/iBoot32Patcher" iBEC.raw iBEC.patched --rsa --debug -b "rd=md0 -v amfi=0xff amfi_get_out_of_my_way=1 cs_enforcement_disable=1 pio-error=0"
             fi

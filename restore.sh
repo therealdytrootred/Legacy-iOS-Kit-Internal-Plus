@@ -1549,6 +1549,11 @@ device_get_info() {
         iPhone3,[13] | iPhone[45],* | iPad1,1 | iPad2,4 | iPod[35],1 ) device_canpowder=1;; # powdersn0w device support
     esac
 
+    # DRA v6 downgrade support.
+    case $device_type in
+        iPhone4,1 | iPod4,1 ) device_can_drav6=1;;
+    esac
+
     device_fw_dir="../saved/firmware/$device_type"
     mkdir -p $device_fw_dir 2>/dev/null
     all_flash="Firmware/all_flash/all_flash.${device_model}ap.production"
@@ -3048,6 +3053,9 @@ shsh_save() {
             fi
             mv BuildManifest.plist $buildmanifest
         fi
+    fi
+    if [[ $device_base_drav6 == 1 && $device_proc == 5 ]]; then
+        buildmanifest="../resources/manifest/BuildManifest_${device_type}_${version}.plist"
     fi
     shsh_check=${device_ecid}_${device_type}_${device_model}ap_${version}-${build_id}_${apnonce}*.shsh*
 
@@ -6465,6 +6473,8 @@ restore_deviceprepare() {
                 shsh_save version $device_latest_vers
                 device_enter_mode pwnDFU
                 return
+            elif [[ $device_base_drav6 == 1 ]]; then
+                shsh_save version $device_base_vers
             elif [[ $device_target_other != 1 && $device_target_powder != 1 ]]; then
                 shsh_save
             fi
@@ -7898,7 +7908,7 @@ menu_ramdisk() {
         if (( device_proc >= 5 )); then
             menu_items+=("Erase All (iOS 9+)")
         fi
-        if [[ $device_canpowder == 1 ]]; then
+        if [[ $device_canpowder == 1 || $device_can_drav6 == 1 ]]; then
             menu_items+=("Disable/Enable Exploit")
         fi
         if (( device_proc >= 7 )) && [[ $device_proc != 10 ]]; then
@@ -10523,6 +10533,9 @@ menu_restore() {
             iPhone3,[13] | iPad1,1 | iPod3,1 )
                 menu_items+=("powdersn0w (any iOS)");;
         esac
+        if [[ $device_can_drav6 == 1 ]]; then
+            menu_items+=("DRA v6 (any iOS)")
+        fi
         if (( device_proc < 7 )) || [[ $platform == "linux" ]]; then
             menu_items+=("Latest iOS ($device_latest_vers)")
         fi
@@ -11101,7 +11114,7 @@ menu_ipsw_appleinternal() {
     local menu_items
     local selected
     local back
-    local parent_mode="$1" # powdersn0w or Tethered
+    local parent_mode="$1" # powdersn0w, DRA v6, or Tethered
     
     # Reset selections on entry
     ipsw_path=""
@@ -11133,7 +11146,7 @@ menu_ipsw_appleinternal() {
             fi
             
             # Powdersn0w specific logo support (iOS 4/5/6)
-            if [[ $parent_mode == *"powdersn0w"* ]]; then
+            if [[ $parent_mode == *"powdersn0w"* || $parent_mode == *"DRA v6"* ]]; then
                 case $device_target_vers in
                     [456]* ) ipsw_cancustomlogo2=1;;
                 esac
@@ -11143,7 +11156,7 @@ menu_ipsw_appleinternal() {
         # 2. Build Menu
         menu_items=("Select Target IPSW (Stock)")
         
-        if [[ $parent_mode == *"powdersn0w"* ]]; then
+        if [[ $parent_mode == *"powdersn0w"* || $parent_mode == *"DRA v6"* ]]; then
             menu_items+=("Select Base IPSW (Stock)")
         fi
         
@@ -11160,7 +11173,7 @@ menu_ipsw_appleinternal() {
             menu_items+=("Select Apple Logo" "Select Recovery Logo")
         fi
         
-        if [[ $parent_mode == *"powdersn0w"* ]]; then
+        if [[ $parent_mode == *"powdersn0w"* || $parent_mode == *"DRA v6"* ]]; then
             menu_items+=("Advanced Options")
         fi
         
@@ -11203,7 +11216,7 @@ menu_ipsw_appleinternal() {
             print "* Target Stock IPSW: [Not Selected]"
         fi
         
-        if [[ $parent_mode == *"powdersn0w"* ]]; then
+        if [[ $parent_mode == *"powdersn0w"* || $parent_mode == *"DRA v6"* ]]; then
             if [[ -n $ipsw_base_path ]]; then
                 print "* Base Stock IPSW:   $(basename "$ipsw_base_path").ipsw"
             else
@@ -11300,7 +11313,7 @@ menu_advanced_options() {
         fi
 
         # Custom Kernelcache & Bootargs Logic (Show on powdersn0w and justboot)
-        if [[ $ctx == "powdersn0w"* || $ctx == "justboot" ]]; then
+        if [[ $ctx == "powdersn0w"* || $ctx == "DRA v6"* || $ctx == "justboot" ]]; then
             menu_items+=("Select Custom Kernelcache")
             if [[ -n $custom_kernelcache_path ]]; then
                 menu_items+=("Clear Custom Kernelcache")
@@ -11328,13 +11341,13 @@ menu_advanced_options() {
             fi
         fi
 
-        if [[ $ctx == "powdersn0w"* || $ctx == "justboot" ]]; then
+        if [[ $ctx == "powdersn0w"* || $ctx == "DRA v6"* || $ctx == "justboot" ]]; then
             if [[ -n $custom_kernelcache_path ]]; then
                 print "* Custom Kernelcache: $(basename "$custom_kernelcache_path")"
             else
                 print "* Custom Kernelcache: [Not Selected]"
             fi
-            if [[ $ctx == "powdersn0w"* ]]; then
+            if [[ $ctx == "powdersn0w"* || $ctx == "DRA v6"* ]]; then
                 print "* Note: This replaces the filesystem kernelcache (not the restore kernelcache)."
             fi
             
@@ -11539,6 +11552,20 @@ menu_ipsw() {
                 device_base_vers="$device_latest_vers"
                 device_base_build="$device_latest_build"
             fi
+        elif [[ $1 == *"DRA v6"* ]]; then
+            device_target_powder=1
+            device_base_drav6=1
+            case $device_type in
+                iPod4,1 )
+                    device_base_vers="$device_latest_vers"
+                    device_base_build="$device_latest_build"
+                ;;
+                iPhone4,1 )
+                    device_base_vers="6.1.3"
+                    device_base_build="10B329"
+                ;;
+            esac
+            base_vers="$device_base_vers"
         elif [[ $1 == *"Tethered"* ]]; then
             device_target_tethered=1
         elif [[ -n $device_target_vers && -e "../$newpath.ipsw" ]]; then
@@ -11559,9 +11586,9 @@ menu_ipsw() {
             print "* Only select unmodified IPSW for the selection. Do not select custom IPSWs"
         fi
         echo
-        if [[ $1 == *"powdersn0w"* ]]; then
+        if [[ $1 == *"powdersn0w"* || $1 == *"DRA v6"* ]]; then
             menu_items+=("Select Base IPSW (Stock)")
-            if [[ $device_proc == 4 ]]; then
+            if [[ $device_proc == 4 || $device_base_drav6 == 1 ]]; then
                 menu_items+=("Download Base IPSW")
             fi
             if [[ -n $ipsw_path ]]; then
@@ -11591,6 +11618,9 @@ menu_ipsw() {
             fi
             echo
             local text2="(iOS 7.1.x)"
+            if [[ $device_base_drav6 == 1 ]]; then
+                text2="(iOS $device_base_vers)"
+            fi
             case $device_type in
                 iPhone3,[13] | iPad1,1 | iPod3,1 ) text2="(iOS $device_base_vers)";;
                 iPhone5,[1234] ) text2="(iOS 7.x)";;
@@ -11612,7 +11642,7 @@ menu_ipsw() {
                 print "* Select Base IPSW $text2 to continue"
                 echo
             fi
-            if [[ $device_proc == 4 ]]; then
+            if [[ $device_proc == 4 || $device_can_drav6 == 1 ]]; then
                 shsh_path=1
             else
                 if [[ -n $shsh_path ]]; then
@@ -11777,12 +11807,12 @@ menu_ipsw() {
         fi
         
         # AppleInternal Menu Option
-        if [[ $1 == *"powdersn0w"* || $1 == *"Tethered"* ]]; then
+        if [[ $1 == *"powdersn0w"* || $1 == *"DRA v6"* || $1 == *"Tethered"* ]]; then
             menu_items+=("AppleInternal")
         fi
         
         # Advanced Options Menu (powdersn0w creation, or ANY powdersn0w/tethered restore)
-        if [[ $1 == *"powdersn0w"* ]] || [[ $1 == *"Tethered"* && $2 != "ipsw" ]]; then
+        if [[ $1 == *"powdersn0w"* || $1 == *"DRA v6"* ]] || [[ $1 == *"Tethered"* && $2 != "ipsw" ]]; then
             menu_items+=("Advanced Options")
         fi
 
@@ -11879,6 +11909,7 @@ menu_ipsw() {
                 device_base_build=
                 device_target_other=
                 device_target_powder=
+                device_base_drav6=
                 device_target_tethered=
                 device_bootargs=
             ;;
@@ -12101,6 +12132,8 @@ ipsw_custom_set() {
         ipsw_custom+="P"
         if [[ $device_base_vers == "7.0"* ]]; then
             ipsw_custom+="0"
+        elif [[ $device_base_drav6 == 1 ]]; then
+            ipsw_custom+="6"
         fi
     fi
     if [[ $device_target_tethered == 1 ]]; then
@@ -12182,6 +12215,9 @@ menu_ipsw_browse() {
     if [[ $1 == "base" ]]; then
         text="Base"
         menu_items=()
+        if [[ $device_base_drav6 == 1 ]]; then
+            scan="${device_type}_${device_base_vers}_${device_base_build}_Restore.ipsw"
+        else
         case $device_proc in
             4 ) scan="${device_type}_${device_base_vers}_${device_base_build}_Restore.ipsw";;
             6 )
@@ -12190,6 +12226,7 @@ menu_ipsw_browse() {
             ;;
             * ) scan="${device_type}_7.1*Restore.ipsw";;
         esac
+        fi
         menu_items=($(ls ../$scan $HOME/Downloads/$scan 2>/dev/null))
     elif [[ $1 == "special" ]]; then
         scan="${device_type_special}_${device_target_vers}_${device_target_build}_Restore.ipsw"
@@ -12793,7 +12830,7 @@ menu_usefulutilities() {
                 *    ) menu_items+=("Enter pwnDFU Mode");;
             esac
             menu_items+=("Clear NVRAM" "Set NVRAM Variable")
-            if [[ $device_canpowder == 1 ]]; then
+            if [[ $device_canpowder == 1 || $device_can_drav6 == 1 ]]; then
                 menu_items+=("Disable/Enable Exploit")
             elif [[ $device_type == "iPhone2,1" && $device_newbr != 0 && $device_mode != "Normal" ]]; then
                 menu_items+=("Install alloc8 Exploit")
@@ -14472,7 +14509,7 @@ fi
             if [[ $device_proc != 1 && $device_type != "iPod2,1" ]] && (( device_proc < 7 )); then
                 print "* Note: For tethered downgrades, you need to boot your device using the Just Boot option. Exiting recovery mode will not work."
             fi
-            if [[ $device_canpowder == 1 ]]; then
+            if [[ $device_canpowder == 1 || $device_can_drav6 == 1 ]]; then
                 print "* Note 2: If your device is stuck in recovery mode, it may have been restored with powdersn0w before."
                 print "    - If so, try to clear the device's NVRAM: go to Useful Utilities -> Clear NVRAM"
             fi
